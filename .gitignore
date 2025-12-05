@@ -1,0 +1,36 @@
+# Ignore dataset folder and specific test files
+data/
+test.txt
+test.json
+
+# Common Python artifacts
+__pycache__/
+*.py[cod]
+*.so
+.Python
+
+# Virtual environments
+venv/
+.env/
+.env
+
+# Editor/temp files
+*.swp
+.DS_Store
+.vscode/
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# Byte-compiled / caches
+pip-wheel-metadata/
+*/__pycache__/
+
+# Optional: ignore local secrets
+.env
+settings.ini
+secrets.json
