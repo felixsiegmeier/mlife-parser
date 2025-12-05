@@ -3,6 +3,13 @@ data/
 test.txt
 test.json
 
+# Output files and debug data (may contain sensitive patient data)
+*.csv
+analysis_result.txt
+debug_all_patient_data_headers.txt
+blacklist.txt
+*.ipynb
+
 # Common Python artifacts
 __pycache__/
 *.py[cod]
