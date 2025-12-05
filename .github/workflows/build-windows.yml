@@ -24,14 +24,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller cryptography
 
       - name: Build single-file EXE with PyInstaller
         run: |
           pyinstaller --onefile --clean --name mlife-parser `
             --add-data "mlife_core;mlife_core" `
             --add-data "ui;ui" `
-            --add-data "views;views" `
             --collect-all flet `
             --noconsole `
             main.py
