@@ -91,7 +91,8 @@ class PatientInfoParserMixin(DataParserBase):
             "Größe": "Größe",
             "Körperoberfläche": "Körperoberfläche (BSA)",
             "Fall-ID": "Fall-ID",
-            "Pat.-ID": "Patienten-ID"
+            "Pat.-ID": "Patienten-ID",
+            "Geb.-datum": "Geburtsdatum"
         }
         
         for idx, h in enumerate(header_parts):

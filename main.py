@@ -115,6 +115,18 @@ def main(page: ft.Page):
             status_text.value = f"Erfolg! {len(df)} Datenpunkte geladen. Patient: {patient_name or 'Unbekannt'}"
             status_text.color = ft.Colors.GREEN
             
+            # Callback für Anonymisierungs-Update registrieren
+            def on_anonymization_complete():
+                if app_state.is_anonymized:
+                    status_text.value = f"Erfolg! {len(app_state.df)} Datenpunkte geladen. Patient: [ANONYMISIERT]"
+                    status_text.color = ft.Colors.GREEN
+                    try:
+                        page.update()
+                    except Exception:
+                        pass
+            
+            app_state.on_anonymization_complete = on_anonymization_complete
+            
             # Tabs aktivieren und Daten laden
             tabs_control.visible = True
             big_button_container.visible = False

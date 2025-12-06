@@ -16,6 +16,14 @@ __pycache__/
 *.so
 .Python
 
+# spaCy models (downloaded at runtime)
+spacy_models/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
 # Virtual environments
 venv/
 .env/

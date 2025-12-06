@@ -31,6 +31,7 @@ jobs:
           pyinstaller --onefile --clean --name mlife-parser `
             --add-data "mlife_core;mlife_core" `
             --add-data "ui;ui" `
+            --add-data "deidentifier_engine;deidentifier_engine" `
             --collect-all flet `
             --noconsole `
             main.py

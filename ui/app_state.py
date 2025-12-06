@@ -1,4 +1,5 @@
 import pandas as pd
+from typing import Callable, Optional
 
 class AppState:
     def __init__(self):
@@ -12,3 +13,5 @@ class AppState:
         }
         # Temporary storage for export operations
         self.export_df: pd.DataFrame = None
+        # Callback für Status-Updates nach Anonymisierung
+        self.on_anonymization_complete: Optional[Callable[[], None]] = None

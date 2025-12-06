@@ -1,124 +1,133 @@
 import re
-from typing import List, Optional
-from presidio_analyzer import PatternRecognizer, Pattern
+from typing import List, Optional, Callable
+import pandas as pd
 from presidio_anonymizer.entities import OperatorConfig
-from .nlp_engine import analyzer, anonymizer
+from rapidfuzz import fuzz
+from .nlp_engine import get_analyzer, get_anonymizer
 
-def create_name_pattern(p_name, regex_str):
-    """Helper für Regex-Erstellung mit Word Boundaries"""
-    return Pattern(name=p_name, regex=regex_str, score=1.0)
 
-def create_patterns_for_name(name_str, label_prefix):
-    """Funktion zum Erstellen von Patterns für einen Namen"""
-    patterns = []
-    clean = name_str.strip()
-    if not clean:
-        return patterns
-        
-    parts = clean.split()
-    escaped_parts = [re.escape(p) for p in parts]
-    
-    if len(escaped_parts) >= 1:
-        # Pattern: Exakte Eingabe
-        full_name_regex = r"\b" + r"\s+".join(escaped_parts) + r"\b"
-        patterns.append(create_name_pattern(f"{label_prefix}_Exact", full_name_regex))
-    
-    if len(escaped_parts) >= 2:
-        lastname = escaped_parts[-1]
-        firstname_parts = escaped_parts[:-1]
-        firstname = r"\s+".join(firstname_parts)
-        
-        # Pattern: "Nachname, Vorname"
-        p_last_first = r"\b" + lastname + r"\s*,\s*" + firstname + r"\b"
-        patterns.append(create_name_pattern(f"{label_prefix}_LastFirst", p_last_first))
-        
-        # Pattern: "Nachname Vorname"
-        p_last_first_no_comma = r"\b" + lastname + r"\s+" + firstname + r"\b"
-        patterns.append(create_name_pattern(f"{label_prefix}_LastFirstNoComma", p_last_first_no_comma))
-        
-        # Pattern: Nur Nachname (wenn > 3 Zeichen)
-        if len(parts[-1]) > 3:
-            p_last_only = r"\b" + lastname + r"\b"
-            patterns.append(create_name_pattern(f"{label_prefix}_LastOnly", p_last_only))
-    return patterns
+# Kategorien die Freitext mit potenziell sensiblen Daten enthalten
+# Diese werden mit NLP-Anonymisierung verarbeitet
+FREETEXT_SOURCE_TYPES = [
+    "Arztnotizen",
+    "Anamnese",
+    "Visite",
+    "Status",
+    "Anästhesieübergabe",
+    "Kardiotechnik (Notizen)",
+    "Mikrobiologie",
+    "Atmungstherapie",
+    "Bronchoskopie",
+    "Meilensteine",
+    "Visite durchgeführt von",
+    "weitere TeilnehmerInnen",
+    "fachärztliche Behandlungsleitung",
+    "fachärztliche Behandlungsleitung (WDA1I, WD4I)",
+    "Anästhesiepflege",
+    "HK Befund",
+    "Reanimation",
+    "Verbal Rate Skala",
+    "Intensivmedizin",
+    "Operation/Datum/Operateur",
+    "Therapieplanung Folgewoche/Ziele/Sonstiges",
+    "Behandlungsergebnisse/akt. Situation",
+]
 
-def sledgehammer_replace(txt: str, terms: List[str]) -> str:
+
+def blacklist_replace(txt: str, terms: List[str], fuzzy_matching: bool = True, fuzzy_threshold: int = 85) -> str:
     """
-    Ersetzt alle Begriffe aus der Liste im Text (case-insensitive).
+    Ersetzt alle Begriffe aus der Blacklist im Text (case-insensitive).
+    
+    Args:
+        txt: Der zu bearbeitende Text.
+        terms: Liste von Begriffen, die entfernt werden sollen.
+        fuzzy_matching: Wenn True, werden auch ähnliche Begriffe erkannt (Tippfehler, Buchstabendreher).
+        fuzzy_threshold: Schwellwert für Fuzzy Matching (0-100). Höher = strenger.
+    
+    Returns:
+        Der bearbeitete Text mit ersetzten Begriffen.
     """
-    if not terms:
+    if not terms or not txt:
         return txt
     
-    for term in terms:
-        if not term or not term.strip():
+    # Bereinigte Terms (keine leeren Einträge)
+    clean_terms = [t.strip() for t in terms if t and t.strip()]
+    if not clean_terms:
+        return txt
+    
+    if not fuzzy_matching:
+        # Einfache case-insensitive Ersetzung
+        for term in clean_terms:
+            pattern = re.compile(re.escape(term), re.IGNORECASE)
+            txt = pattern.sub("<ANONYM>", txt)
+        return txt
+    
+    # Fuzzy Matching: Text in Wörter aufteilen und prüfen
+    # Wir behalten Trennzeichen bei, um den Text rekonstruieren zu können
+    tokens = re.split(r'(\s+|[,;.!?:\-\(\)\[\]\"\']+)', txt)
+    
+    result_tokens = []
+    for token in tokens:
+        # Leere Tokens oder reine Trennzeichen überspringen
+        if not token or not token.strip() or re.match(r'^[\s,;.!?:\-\(\)\[\]\"\']+$', token):
+            result_tokens.append(token)
             continue
         
-        # Case-insensitive replacement
-        pattern = re.compile(re.escape(term), re.IGNORECASE)
-        txt = pattern.sub("<ANONYM>", txt)
+        # Prüfen ob Token einem Blacklist-Begriff ähnelt
+        should_replace = False
+        for term in clean_terms:
+            # Exakte Übereinstimmung (case-insensitive)
+            if token.lower() == term.lower():
+                should_replace = True
+                break
+            
+            # Fuzzy Matching nur bei ähnlicher Länge (Performance)
+            if abs(len(token) - len(term)) <= 2:
+                similarity = fuzz.ratio(token.lower(), term.lower())
+                if similarity >= fuzzy_threshold:
+                    should_replace = True
+                    break
+        
+        if should_replace:
+            result_tokens.append("<ANONYM>")
+        else:
+            result_tokens.append(token)
     
-    return txt
+    return "".join(result_tokens)
 
-def anonymize_content(text: str, blacklist_terms: List[str] = [], persistent_blacklist: List[str] = []) -> str:
+
+def anonymize_content(text: str, blacklist: List[str] = [], fuzzy_matching: bool = True, fuzzy_threshold: int = 85) -> str:
     """
     Anonymisiert den gegebenen Text.
     
     Args:
         text: Der zu anonymisierende Text.
-        blacklist_terms: Eine Liste von Begriffen (Namen, Daten), die definitiv entfernt werden sollen.
-        persistent_blacklist: Eine Liste von Begriffen (Ärzte, Orte, etc.), die dauerhaft entfernt werden sollen.
+        blacklist: Eine Liste von Begriffen, die entfernt werden sollen (bereits bereinigte Wörter).
+        fuzzy_matching: Wenn True, werden auch ähnliche Begriffe erkannt (Tippfehler, Buchstabendreher).
+        fuzzy_threshold: Schwellwert für Fuzzy Matching (0-100). Höher = strenger. Standard: 85.
     
     Returns:
         Der anonymisierte Text.
     """
-    results = []
     if not text:
         return ""
 
-    # Liste für Ad-hoc Recognizer (werden nur für diesen Aufruf genutzt)
-    ad_hoc_recognizers = []
-
-    # 1. Ad-hoc Regel: Blacklist Terms (als Deny-List für PERSON oder generisch)
-    if blacklist_terms:
-        bl_recognizer = PatternRecognizer(
-            supported_entity="PERSON",
-            deny_list=blacklist_terms,
-            name="BlacklistRecognizer"
-        )
-        ad_hoc_recognizers.append(bl_recognizer)
-
-    # 2. Ad-hoc Regel: Persistente Blacklist
-    if persistent_blacklist:
-        doc_patterns = []
-        for i, doc in enumerate(persistent_blacklist):
-            doc_patterns.extend(create_patterns_for_name(doc, f"Persistent_{i}"))
-        
-        if doc_patterns:
-            doc_recognizer = PatternRecognizer(
-                supported_entity="PERSON",
-                patterns=doc_patterns,
-                name="PersistentBlacklistRecognizer"
-            )
-            ad_hoc_recognizers.append(doc_recognizer)
-
-    # Analyse durchführen
-    results = analyzer.analyze(
+    # Presidio-Analyse durchführen (erkennt automatisch Personen, Daten, etc.)
+    results = get_analyzer().analyze(
         text=text,
         language='de',
-        entities=["PERSON", "DATE_TIME", "SENSITIVE_DATE", "PHONE_NUMBER", "EMAIL_ADDRESS"],
-        ad_hoc_recognizers=ad_hoc_recognizers
+        entities=["PERSON", "PHONE_NUMBER", "EMAIL_ADDRESS"]
     )
 
     # Konfiguration der Anonymisierung
     operators = {
         "PERSON": OperatorConfig("replace", {"new_value": "<ANONYM>"}),
-        "SENSITIVE_DATE": OperatorConfig("replace", {"new_value": "<GD>"}),
         "PHONE_NUMBER": OperatorConfig("replace", {"new_value": "<KONTAKT>"}),
         "EMAIL_ADDRESS": OperatorConfig("replace", {"new_value": "<KONTAKT>"}),
         "DEFAULT": OperatorConfig("keep")
     }
 
-    anonymized_result = anonymizer.anonymize(
+    anonymized_result = get_anonymizer().anonymize(
         text=text,
         analyzer_results=results,
         operators=operators
@@ -126,12 +135,120 @@ def anonymize_content(text: str, blacklist_terms: List[str] = [], persistent_bla
     
     final_text = anonymized_result.text
 
-    # Blacklist hämmern
-    if blacklist_terms:
-        final_text = sledgehammer_replace(final_text, blacklist_terms)
-        
-    # Persistente Blacklist hämmern
-    if persistent_blacklist:
-        final_text = sledgehammer_replace(final_text, persistent_blacklist)
+    # Blacklist-Begriffe entfernen (mit optionalem Fuzzy Matching)
+    if blacklist:
+        final_text = blacklist_replace(final_text, blacklist, fuzzy_matching, fuzzy_threshold)
 
     return final_text
+
+
+def anonymize_dataframe(
+    df: pd.DataFrame,
+    blacklist: List[str],
+    fuzzy_matching: bool = True,
+    fuzzy_threshold: int = 85,
+    progress_callback: Optional[Callable[[float, str], None]] = None
+) -> pd.DataFrame:
+    """
+    Anonymisiert einen DataFrame mit Patientendaten.
+    
+    - Freitext-Kategorien (Arztnotizen, Visite, etc.) werden mit NLP anonymisiert
+    - Alle anderen Kategorien: Nur Blacklist-Ersetzung auf value-Spalte
+    - Numerische Werte werden nicht verändert (Performance)
+    
+    Args:
+        df: Der zu anonymisierende DataFrame.
+        blacklist: Liste von Begriffen, die ersetzt werden sollen.
+        fuzzy_matching: Wenn True, werden auch ähnliche Begriffe erkannt.
+        fuzzy_threshold: Schwellwert für Fuzzy Matching (0-100).
+        progress_callback: Optionale Callback-Funktion mit (progress: 0.0-1.0, status_text: str)
+    
+    Returns:
+        Der anonymisierte DataFrame (Kopie des Originals).
+    """
+    if df is None or df.empty:
+        return df
+    
+    # Kopie erstellen, um das Original nicht zu verändern
+    df_anon = df.copy()
+    
+    # Prüfen ob 'value' und 'source_type' Spalten existieren
+    if 'value' not in df_anon.columns:
+        return df_anon
+    
+    has_source_type = 'source_type' in df_anon.columns
+    
+    # Blacklist bereinigen
+    clean_blacklist = [t.strip() for t in blacklist if t and t.strip()]
+    
+    if not clean_blacklist and not has_source_type:
+        # Keine Blacklist und keine source_type -> nichts zu tun
+        return df_anon
+    
+    total_rows = len(df_anon)
+    processed = 0
+    
+    # Freitext-Zeilen identifizieren (diese bekommen NLP-Anonymisierung)
+    if has_source_type:
+        freetext_mask = df_anon['source_type'].isin(FREETEXT_SOURCE_TYPES)
+        freetext_indices = df_anon[freetext_mask].index.tolist()
+    else:
+        freetext_indices = []
+    
+    # Alle Zeilen mit nicht-leerem value-Feld
+    value_mask = df_anon['value'].notna() & (df_anon['value'].astype(str).str.strip() != '')
+    rows_to_process = df_anon[value_mask].index.tolist()
+    
+    if progress_callback:
+        progress_callback(0.0, f"Anonymisiere {len(rows_to_process)} Einträge...")
+    
+    for idx in rows_to_process:
+        value = df_anon.at[idx, 'value']
+        
+        # Numerische Werte überspringen
+        if isinstance(value, (int, float)):
+            processed += 1
+            continue
+        
+        value_str = str(value)
+        
+        # Kurze Standardwerte überspringen (z.B. "ja", "nein", "durchgeführt")
+        if len(value_str) < 5:
+            processed += 1
+            continue
+        
+        if idx in freetext_indices:
+            # Freitext: NLP + Blacklist-Anonymisierung
+            try:
+                anonymized_value = anonymize_content(
+                    value_str,
+                    blacklist=clean_blacklist,
+                    fuzzy_matching=fuzzy_matching,
+                    fuzzy_threshold=fuzzy_threshold
+                )
+                df_anon.at[idx, 'value'] = anonymized_value
+            except Exception as e:
+                # Bei Fehler: Nur Blacklist-Ersetzung
+                print(f"NLP-Fehler bei Zeile {idx}: {e}")
+                if clean_blacklist:
+                    df_anon.at[idx, 'value'] = blacklist_replace(
+                        value_str, clean_blacklist, fuzzy_matching, fuzzy_threshold
+                    )
+        else:
+            # Kein Freitext: Nur Blacklist-Ersetzung (falls Blacklist vorhanden)
+            if clean_blacklist:
+                df_anon.at[idx, 'value'] = blacklist_replace(
+                    value_str, clean_blacklist, fuzzy_matching, fuzzy_threshold
+                )
+        
+        processed += 1
+        
+        # Fortschritt alle 100 Zeilen aktualisieren
+        if progress_callback and processed % 100 == 0:
+            progress = processed / len(rows_to_process)
+            progress_callback(progress, f"Anonymisiert: {processed} / {len(rows_to_process)}")
+    
+    if progress_callback:
+        progress_callback(1.0, "Anonymisierung abgeschlossen.")
+    
+    return df_anon
