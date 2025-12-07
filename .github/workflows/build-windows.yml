@@ -28,6 +28,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller cryptography
+          pip install flet-desktop
 
       - name: Build single-file EXE with PyInstaller
         run: |
@@ -36,6 +37,20 @@ jobs:
             --add-data "ui;ui" `
             --add-data "deidentifier_engine;deidentifier_engine" `
             --collect-all flet `
+            --collect-all flet_desktop `
+            --collect-all spacy `
+            --collect-all presidio_analyzer `
+            --collect-all presidio_anonymizer `
+            --hidden-import=flet_desktop `
+            --hidden-import=flet_desktop.app `
+            --hidden-import=pandas `
+            --hidden-import=numpy `
+            --hidden-import=multiprocessing `
+            --hidden-import=openpyxl `
+            --hidden-import=rapidfuzz `
+            --hidden-import=pydantic `
+            --hidden-import=spacy `
+            --hidden-import=thinc `
             --noconsole `
             main.py
         shell: pwsh
