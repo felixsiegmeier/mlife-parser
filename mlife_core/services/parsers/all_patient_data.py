@@ -224,12 +224,6 @@ class AllPatientDataMixin(DataParserBase):
                 if data_rows:
                     result[header][sub_header] = pd.DataFrame(data_rows)
 
-        with open("all_patient_data_debug.csv", "w", encoding="utf-8") as f:
-            for header, sub_blocks in result.items():
-                for sub_header, df in sub_blocks.items():
-                    f.write(f"Header: {header} | Sub-header: {sub_header}\n")
-                    df.to_csv(f, index=False, sep=';')
-                    f.write("\n\n")
         return result
 
 
