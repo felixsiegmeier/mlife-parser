@@ -48,17 +48,107 @@ def get_model_path() -> str:
     return os.path.join(model_dir, f"{DEFAULT_MODEL_NAME}-{MODEL_VERSION}", DEFAULT_MODEL_NAME, f"{DEFAULT_MODEL_NAME}-{MODEL_VERSION}")
 
 
+def find_local_archive() -> Optional[Tuple[str, str]]:
+    """
+    Sucht nach einer lokalen .tar.gz oder .tar Datei im spacy_models Verzeichnis.
+    macOS Safari entpackt .tar.gz automatisch zu .tar, daher beide Formate unterstützen.
+    
+    Returns:
+        Tuple aus (Pfad zur Archiv-Datei, Modus für tarfile) oder None.
+        Modus: "r:gz" für .tar.gz, "r:" für .tar
+    """
+    model_dir = get_model_directory()
+    if not os.path.exists(model_dir):
+        return None
+    
+    # Suche nach passenden Archiv-Dateien (erst .tar.gz, dann .tar)
+    for filename in os.listdir(model_dir):
+        if filename.endswith(".tar.gz") and DEFAULT_MODEL_NAME in filename:
+            return (os.path.join(model_dir, filename), "r:gz")
+    
+    for filename in os.listdir(model_dir):
+        if filename.endswith(".tar") and DEFAULT_MODEL_NAME in filename:
+            return (os.path.join(model_dir, filename), "r:")
+    
+    return None
+
+
+def extract_local_archive(
+    progress_callback: Optional[Callable[[float, str], None]] = None
+) -> Tuple[bool, str]:
+    """
+    Entpackt eine lokal vorhandene .tar.gz oder .tar Datei und löscht sie danach.
+    
+    Args:
+        progress_callback: Optionale Callback-Funktion für Fortschrittsanzeige.
+    
+    Returns:
+        Tuple aus (Erfolg: bool, Nachricht: str)
+    """
+    archive_info = find_local_archive()
+    if not archive_info:
+        return False, "Keine lokale Archiv-Datei gefunden."
+    
+    archive_path, tar_mode = archive_info
+    model_dir = get_model_directory()
+    
+    try:
+        if progress_callback:
+            progress_callback(0.1, "Entpacke lokales Modell...")
+        
+        print(f"Entpacke lokales Archiv: {archive_path} (Modus: {tar_mode})")
+        
+        with tarfile.open(archive_path, tar_mode) as tar:
+            tar.extractall(model_dir)
+        
+        if progress_callback:
+            progress_callback(0.9, "Räume auf...")
+        
+        # Archiv-Datei nach erfolgreichem Entpacken löschen
+        os.remove(archive_path)
+        print(f"Archiv-Datei gelöscht: {archive_path}")
+        
+        if progress_callback:
+            progress_callback(1.0, "Fertig!")
+        
+        return True, "Modell erfolgreich aus lokaler Datei installiert."
+        
+    except tarfile.TarError as e:
+        error_msg = f"Fehler beim Entpacken: {str(e)}"
+        print(error_msg)
+        return False, error_msg
+    except OSError as e:
+        error_msg = f"Dateisystemfehler: {str(e)}"
+        print(error_msg)
+        return False, error_msg
+    except Exception as e:
+        error_msg = f"Unerwarteter Fehler: {str(e)}"
+        print(error_msg)
+        return False, error_msg
+
+
 def is_model_available() -> bool:
     """
     Prüft, ob das spaCy-Modell lokal verfügbar ist.
+    Versucht zuerst, ein lokal vorhandenes Archiv zu entpacken.
     
     Returns:
         True, wenn das Modell im App-Verzeichnis existiert, sonst False.
     """
     model_path = get_model_path()
-    # Prüfen ob das Modell-Verzeichnis existiert und die meta.json vorhanden ist
     meta_path = os.path.join(model_path, "meta.json")
-    return os.path.exists(meta_path)
+    
+    # Modell bereits entpackt vorhanden?
+    if os.path.exists(meta_path):
+        return True
+    
+    # Prüfen ob eine lokale .tar.gz oder .tar vorhanden ist und diese entpacken
+    if find_local_archive():
+        success, _ = extract_local_archive()
+        if success:
+            return os.path.exists(meta_path)
+    
+    return False
 
 
 def download_model_with_progress(

@@ -6,7 +6,12 @@ from .nlp_engine import (
     ensure_model_available,
     is_engine_initialized,
     get_model_size_mb,
+    get_model_directory,
+    find_local_archive,
+    extract_local_archive,
     DEFAULT_MODEL_NAME,
+    MODEL_VERSION,
+    MODEL_URL,
 )
 
 __all__ = [
@@ -19,5 +24,10 @@ __all__ = [
     "ensure_model_available",
     "is_engine_initialized",
     "get_model_size_mb",
+    "get_model_directory",
+    "find_local_archive",
+    "extract_local_archive",
     "DEFAULT_MODEL_NAME",
+    "MODEL_VERSION",
+    "MODEL_URL",
 ]

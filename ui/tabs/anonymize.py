@@ -1,5 +1,6 @@
 import flet as ft
 from ui.app_state import AppState
+from ui.dialogs import show_model_error_dialog
 import re
 import os
 import sys
@@ -123,7 +124,12 @@ class AnonymizeTab(ft.Container):
                 self._action_button.icon = ft.Icons.DOWNLOAD
                 self._action_button.disabled = False
                 if self.page:
-                    self.page.open(ft.SnackBar(ft.Text(f"Fehler: {message}")))
+                    # Dialog mit Hilfe zur manuellen Installation anzeigen
+                    show_model_error_dialog(
+                        self.page,
+                        message,
+                        on_retry=lambda: self._handle_action_click(None)
+                    )
             
             try:
                 self.update()
