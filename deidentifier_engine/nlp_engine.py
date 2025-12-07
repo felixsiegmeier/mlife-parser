@@ -21,9 +21,9 @@ MODEL_VERSION = "3.7.0"
 MODEL_URL = f"https://github.com/explosion/spacy-models/releases/download/{DEFAULT_MODEL_NAME}-{MODEL_VERSION}/{DEFAULT_MODEL_NAME}-{MODEL_VERSION}.tar.gz"
 
 # Download-Konfiguration
-DOWNLOAD_TIMEOUT = 60  # 60 Sekunden Timeout pro Verbindungsversuch
-MAX_RETRIES = 2  # Weniger Retries, schnelleres Feedback
-RETRY_DELAY = 3  # Sekunden zwischen Retries
+DOWNLOAD_TIMEOUT = 30  # 30 Sekunden Timeout - schnelles Feedback bei Blockierung
+MAX_RETRIES = 1  # Nur 1 Versuch, dann manuellen Download anbieten
+RETRY_DELAY = 2  # Sekunden zwischen Retries
 
 # Globale Engine-Instanzen (lazy initialized)
 _analyzer: Optional[AnalyzerEngine] = None
@@ -104,6 +104,8 @@ def download_model_with_progress(
             if progress_callback:
                 if attempt > 1:
                     progress_callback(0.0, f"Versuch {attempt}/{MAX_RETRIES}...")
+                else:
+                    progress_callback(0.0, "Verbinde mit Server...")
             
             # SSL-Kontext erstellen (manchmal nötig bei Firewalls)
             ssl_context = ssl.create_default_context()
@@ -116,6 +118,9 @@ def download_model_with_progress(
                 MODEL_URL,
                 headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) mlife-parser/1.0'}
             )
+            
+            if progress_callback:
+                progress_callback(0.01, "Warte auf Antwort vom Server...")
             
             # Streaming-Download für bessere Kontrolle
             with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT, context=ssl_context) as response:
