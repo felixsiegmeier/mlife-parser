@@ -21,9 +21,9 @@ MODEL_VERSION = "3.7.0"
 MODEL_URL = f"https://github.com/explosion/spacy-models/releases/download/{DEFAULT_MODEL_NAME}-{MODEL_VERSION}/{DEFAULT_MODEL_NAME}-{MODEL_VERSION}.tar.gz"
 
 # Download-Konfiguration
-DOWNLOAD_TIMEOUT = 300  # 5 Minuten Timeout für große Dateien
-MAX_RETRIES = 3
-RETRY_DELAY = 5  # Sekunden zwischen Retries
+DOWNLOAD_TIMEOUT = 60  # 60 Sekunden Timeout pro Verbindungsversuch
+MAX_RETRIES = 2  # Weniger Retries, schnelleres Feedback
+RETRY_DELAY = 3  # Sekunden zwischen Retries
 
 # Globale Engine-Instanzen (lazy initialized)
 _analyzer: Optional[AnalyzerEngine] = None
