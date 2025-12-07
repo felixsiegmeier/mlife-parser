@@ -85,9 +85,6 @@ class FluidBalanceParserMixin(DataParserBase):
 
         if not entries:
             return pd.DataFrame()
-        with open("fluid_debug.log", "w") as f:
-            for entry in entries:
-                f.write(f"{entry}\n")
 
         return pd.DataFrame([item.dict() for item in entries])
 

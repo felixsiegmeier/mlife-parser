@@ -70,12 +70,38 @@ def is_model_available() -> bool:
     return os.path.exists(meta_path)
 
 
+def _check_connectivity() -> Tuple[bool, str]:
+    """
+    Schneller Konnektivitätstest zu GitHub (max 10 Sekunden).
+    Testet nur ob der Host erreichbar ist, nicht den vollständigen Download.
+    """
+    test_host = "github.com"
+    test_port = 443
+    
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        result = sock.connect_ex((test_host, test_port))
+        sock.close()
+        
+        if result == 0:
+            return True, "Verbindung OK"
+        else:
+            return False, f"Verbindung zu {test_host} fehlgeschlagen (Code: {result})"
+    except socket.timeout:
+        return False, "Verbindungs-Timeout: Server nicht erreichbar"
+    except socket.gaierror as e:
+        return False, f"DNS-Fehler: {str(e)}"
+    except Exception as e:
+        return False, f"Netzwerkfehler: {str(e)}"
+
+
 def download_model_with_progress(
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Tuple[bool, str]:
     """
     Lädt das spaCy-Modell direkt von GitHub herunter (für --onefile Builds).
-    Verwendet Thread-basierten Timeout für zuverlässiges Abbrechen bei Firewall-Blockierung.
+    Prüft zuerst die Konnektivität mit schnellem Timeout.
     
     Args:
         progress_callback: Optionale Callback-Funktion mit (progress: 0.0-1.0, status_text: str)
@@ -92,7 +118,15 @@ def download_model_with_progress(
         return False, f"Konnte Verzeichnis nicht erstellen: {str(e)}"
     
     if progress_callback:
-        progress_callback(0.0, "Verbinde mit Server...")
+        progress_callback(0.0, "Prüfe Netzwerkverbindung...")
+    
+    # SCHNELLER Konnektivitätstest zuerst (max 10 Sekunden)
+    connectivity_ok, connectivity_msg = _check_connectivity()
+    if not connectivity_ok:
+        return False, f"Keine Verbindung zu GitHub möglich: {connectivity_msg}. Bitte prüfen Sie Ihre Firewall-Einstellungen."
+    
+    if progress_callback:
+        progress_callback(0.01, "Verbindung OK - starte Download...")
     
     # Temporäre Datei für den Download
     tmp_path = None
