@@ -6,6 +6,9 @@ import tarfile
 import shutil
 import tempfile
 import urllib.request
+import ssl
+import socket
+import time
 from typing import Optional, Tuple, Callable
 
 from presidio_analyzer import AnalyzerEngine
@@ -16,6 +19,11 @@ from presidio_anonymizer import AnonymizerEngine
 DEFAULT_MODEL_NAME = "de_core_news_lg"
 MODEL_VERSION = "3.7.0"
 MODEL_URL = f"https://github.com/explosion/spacy-models/releases/download/{DEFAULT_MODEL_NAME}-{MODEL_VERSION}/{DEFAULT_MODEL_NAME}-{MODEL_VERSION}.tar.gz"
+
+# Download-Konfiguration
+DOWNLOAD_TIMEOUT = 300  # 5 Minuten Timeout für große Dateien
+MAX_RETRIES = 3
+RETRY_DELAY = 5  # Sekunden zwischen Retries
 
 # Globale Engine-Instanzen (lazy initialized)
 _analyzer: Optional[AnalyzerEngine] = None
@@ -66,6 +74,7 @@ def download_model_with_progress(
 ) -> Tuple[bool, str]:
     """
     Lädt das spaCy-Modell direkt von GitHub herunter (für --onefile Builds).
+    Implementiert Retry-Logik und längere Timeouts für große Dateien.
     
     Args:
         progress_callback: Optionale Callback-Funktion mit (progress: 0.0-1.0, status_text: str)
@@ -75,32 +84,66 @@ def download_model_with_progress(
     """
     model_dir = get_model_directory()
     
+    # Modell-Verzeichnis erstellen
     try:
-        # Modell-Verzeichnis erstellen
         os.makedirs(model_dir, exist_ok=True)
-        
-        if progress_callback:
-            progress_callback(0.0, "Starte Download...")
-        
-        # Temporäre Datei für den Download
-        with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp_file:
-            tmp_path = tmp_file.name
-        
+    except Exception as e:
+        return False, f"Konnte Verzeichnis nicht erstellen: {str(e)}"
+    
+    if progress_callback:
+        progress_callback(0.0, "Starte Download...")
+    
+    # Temporäre Datei für den Download
+    tmp_path = None
+    
+    for attempt in range(1, MAX_RETRIES + 1):
         try:
-            # Download mit Fortschrittsanzeige
-            def reporthook(block_num, block_size, total_size):
-                if total_size > 0 and progress_callback:
-                    # Download nimmt 0-99% ein, Entpacken wird separat angezeigt
-                    progress = min(block_num * block_size / total_size, 1.0) * 0.99
-                    downloaded_mb = (block_num * block_size) / (1024 * 1024)
-                    total_mb = total_size / (1024 * 1024)
-                    progress_callback(progress, f"Lade herunter: {downloaded_mb:.1f} / {total_mb:.1f} MB")
-            
-            print(f"Lade Modell von {MODEL_URL}...")
-            urllib.request.urlretrieve(MODEL_URL, tmp_path, reporthook)
+            with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp_file:
+                tmp_path = tmp_file.name
             
             if progress_callback:
-                progress_callback(0.99, "Entpacke Modell...")
+                if attempt > 1:
+                    progress_callback(0.0, f"Versuch {attempt}/{MAX_RETRIES}...")
+            
+            # SSL-Kontext erstellen (manchmal nötig bei Firewalls)
+            ssl_context = ssl.create_default_context()
+            
+            # Eigener URL-Opener mit Timeout
+            print(f"Lade Modell von {MODEL_URL}... (Versuch {attempt}/{MAX_RETRIES})")
+            
+            # Request mit längeren Timeouts
+            request = urllib.request.Request(
+                MODEL_URL,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) mlife-parser/1.0'}
+            )
+            
+            # Streaming-Download für bessere Kontrolle
+            with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT, context=ssl_context) as response:
+                total_size = int(response.headers.get('content-length', 0))
+                downloaded = 0
+                block_size = 1024 * 1024  # 1 MB Blöcke
+                
+                with open(tmp_path, 'wb') as out_file:
+                    while True:
+                        buffer = response.read(block_size)
+                        if not buffer:
+                            break
+                        
+                        downloaded += len(buffer)
+                        out_file.write(buffer)
+                        
+                        if total_size > 0 and progress_callback:
+                            progress = min(downloaded / total_size, 1.0) * 0.95
+                            downloaded_mb = downloaded / (1024 * 1024)
+                            total_mb = total_size / (1024 * 1024)
+                            progress_callback(progress, f"Lade herunter: {downloaded_mb:.1f} / {total_mb:.1f} MB")
+            
+            # Prüfen ob Download vollständig
+            if total_size > 0 and downloaded < total_size:
+                raise Exception(f"Download unvollständig: {downloaded}/{total_size} Bytes")
+            
+            if progress_callback:
+                progress_callback(0.96, "Entpacke Modell...")
             
             # Entpacken
             print(f"Entpacke nach {model_dir}...")
@@ -111,25 +154,60 @@ def download_model_with_progress(
                 progress_callback(1.0, "Fertig!")
             
             print(f"Modell erfolgreich installiert in {model_dir}")
+            
+            # Temporäre Datei löschen
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            
             return True, "Modell erfolgreich heruntergeladen und installiert."
             
-        finally:
-            # Temporäre Datei löschen
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+        except (urllib.error.URLError, socket.timeout, ssl.SSLError) as e:
+            error_msg = f"Netzwerkfehler (Versuch {attempt}/{MAX_RETRIES}): {str(e)}"
+            print(error_msg)
+            
+            # Temporäre Datei löschen falls vorhanden
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except:
+                    pass
+            
+            if attempt < MAX_RETRIES:
+                if progress_callback:
+                    progress_callback(0.0, f"Fehler - Warte {RETRY_DELAY}s vor erneutem Versuch...")
+                time.sleep(RETRY_DELAY)
+            else:
+                return False, f"Netzwerkfehler nach {MAX_RETRIES} Versuchen: {str(e)}. Bitte prüfen Sie Ihre Internetverbindung und Firewall-Einstellungen."
                 
-    except urllib.error.URLError as e:
-        error_msg = f"Netzwerkfehler beim Herunterladen: {str(e)}"
-        print(error_msg)
-        return False, error_msg
-    except tarfile.TarError as e:
-        error_msg = f"Fehler beim Entpacken: {str(e)}"
-        print(error_msg)
-        return False, error_msg
-    except Exception as e:
-        error_msg = f"Unerwarteter Fehler: {str(e)}"
-        print(error_msg)
-        return False, error_msg
+        except tarfile.TarError as e:
+            # Temporäre Datei löschen
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except:
+                    pass
+            error_msg = f"Fehler beim Entpacken: {str(e)}"
+            print(error_msg)
+            return False, error_msg
+            
+        except Exception as e:
+            # Temporäre Datei löschen
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except:
+                    pass
+            error_msg = f"Unerwarteter Fehler: {str(e)}"
+            print(error_msg)
+            
+            if attempt < MAX_RETRIES:
+                if progress_callback:
+                    progress_callback(0.0, f"Fehler - Warte {RETRY_DELAY}s vor erneutem Versuch...")
+                time.sleep(RETRY_DELAY)
+            else:
+                return False, error_msg
+    
+    return False, "Download fehlgeschlagen nach allen Versuchen."
 
 
 def download_model() -> Tuple[bool, str]:
