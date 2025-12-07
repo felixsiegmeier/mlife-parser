@@ -9,6 +9,7 @@ if __name__ == "__main__":
     import flet as ft
     import os
     from mlife_core.services.pipeline import run_parsing_pipeline
+    from mlife_core.utils import check_for_update_async, get_current_version, UpdateInfo
     from ui.app_state import AppState
     from ui.tabs.overview import OverviewTab
     from ui.tabs.anonymize import AnonymizeTab
@@ -25,6 +26,57 @@ if __name__ == "__main__":
 
         # --- App State ---
         app_state = AppState()
+
+        # --- Update-Banner (initial versteckt) ---
+        update_banner = ft.Container(
+            content=ft.Row([
+                ft.Icon(ft.Icons.SYSTEM_UPDATE, color=ft.Colors.WHITE, size=20),
+                ft.Text("", color=ft.Colors.WHITE, size=13, ref=None),  # wird dynamisch gesetzt
+                ft.TextButton(
+                    "Herunterladen",
+                    style=ft.ButtonStyle(color=ft.Colors.WHITE),
+                    url=""  # wird dynamisch gesetzt
+                ),
+                ft.IconButton(
+                    icon=ft.Icons.CLOSE,
+                    icon_color=ft.Colors.WHITE,
+                    icon_size=18,
+                    on_click=lambda _: hide_update_banner()
+                ),
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=10),
+            bgcolor=ft.Colors.BLUE_700,
+            padding=ft.padding.symmetric(horizontal=15, vertical=8),
+            border_radius=6,
+            visible=False,
+            margin=ft.margin.only(bottom=10),
+        )
+
+        def hide_update_banner():
+            update_banner.visible = False
+            page.update()
+
+        def on_update_check_complete(update_info):
+            """Callback wenn der Update-Check abgeschlossen ist."""
+            if update_info and update_info.is_update_available:
+                # Banner-Inhalt aktualisieren
+                update_banner.content.controls[1] = ft.Text(
+                    f"Neue Version verfügbar: {update_info.latest_version} (aktuell: {update_info.current_version})",
+                    color=ft.Colors.WHITE,
+                    size=13
+                )
+                update_banner.content.controls[2] = ft.TextButton(
+                    "Herunterladen",
+                    style=ft.ButtonStyle(color=ft.Colors.WHITE),
+                    url=update_info.download_url
+                )
+                update_banner.visible = True
+                try:
+                    page.update()
+                except Exception:
+                    pass  # Seite möglicherweise nicht mehr verfügbar
+
+        # Update-Check im Hintergrund starten
+        check_for_update_async(on_update_check_complete)
 
         # --- UI Komponenten ---
 
@@ -205,6 +257,9 @@ if __name__ == "__main__":
         # Haupt-Layout der Seite
         page.add(
             ft.Column([
+                # Update-Banner (falls verfügbar)
+                update_banner,
+                
                 # Header Bereich (kompakt)
                 ft.Row([header_text], alignment=ft.MainAxisAlignment.CENTER),
                 ft.Row([
