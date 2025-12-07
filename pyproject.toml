@@ -1,6 +1,6 @@
 [project]
 name = "mlife-parser"
-version = "1.0.0-beta"
+version = "1.0.0"
 description = "Medical Data Pipeline & Export Tool for mLife CSV data"
 readme = "README.md"
 requires-python = ">=3.11"

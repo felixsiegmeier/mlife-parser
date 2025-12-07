@@ -17,7 +17,7 @@ GITHUB_REPO = "felixsiegmeier/mlife-parser"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
 
 # Aktuelle Version (wird aus pyproject.toml gelesen oder hier als Fallback)
-CURRENT_VERSION = "1.0.0-beta"
+CURRENT_VERSION = "1.0.0"
 
 
 @dataclass
