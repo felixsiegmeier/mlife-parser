@@ -4,18 +4,13 @@ import re
 import os
 import sys
 import threading
-import webbrowser
 from typing import List
 
 from deidentifier_engine import (
     is_model_available,
     download_model_with_progress,
     get_model_size_mb,
-    get_model_directory,
     anonymize_dataframe,
-    MODEL_URL,
-    DEFAULT_MODEL_NAME,
-    MODEL_VERSION,
 )
 
 
@@ -84,125 +79,9 @@ class AnonymizeTab(ft.Container):
             return
         
         if not is_model_available():
-            # Zeige Dialog mit Download-Optionen (automatisch oder manuell)
-            self._show_download_options_dialog()
+            self._start_model_download()
         else:
             self._start_anonymization()
-
-    def _show_download_options_dialog(self):
-        """Zeigt einen Dialog mit Download-Optionen (automatisch oder manuell)."""
-        model_dir = get_model_directory()
-        
-        def close_dialog(e):
-            dialog.open = False
-            self.page.update()
-        
-        def try_auto_download(e):
-            dialog.open = False
-            self.page.update()
-            self._start_model_download()
-        
-        def open_download_link(e):
-            webbrowser.open(MODEL_URL)
-        
-        def open_model_folder(e):
-            # Ordner erstellen falls nicht vorhanden
-            os.makedirs(model_dir, exist_ok=True)
-            # Ordner im Explorer öffnen
-            if sys.platform == 'win32':
-                os.startfile(model_dir)
-            elif sys.platform == 'darwin':
-                os.system(f'open "{model_dir}"')
-            else:
-                os.system(f'xdg-open "{model_dir}"')
-        
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Row([
-                ft.Icon(ft.Icons.DOWNLOAD, color=ft.Colors.BLUE, size=28),
-                ft.Text("Sprachmodell benötigt", weight=ft.FontWeight.BOLD, size=18)
-            ], spacing=10),
-            content=ft.Container(
-                width=520,
-                content=ft.Column([
-                    ft.Text(
-                        f"Für die NLP-Anonymisierung wird das deutsche Sprachmodell benötigt (~{get_model_size_mb():.0f} MB).",
-                        size=13
-                    ),
-                    ft.Container(height=15),
-                    
-                    # Option 1: Automatischer Download
-                    ft.Container(
-                        content=ft.Column([
-                            ft.Text("Option 1: Automatischer Download", weight=ft.FontWeight.BOLD, size=14),
-                            ft.Text("Funktioniert nur ohne Firewall-Einschränkungen.", size=11, color=ft.Colors.GREY_600),
-                            ft.Container(height=5),
-                            ft.ElevatedButton(
-                                "Automatisch herunterladen",
-                                icon=ft.Icons.CLOUD_DOWNLOAD,
-                                on_click=try_auto_download,
-                                style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE)
-                            ),
-                        ]),
-                        bgcolor=ft.Colors.BLUE_50,
-                        padding=15,
-                        border_radius=8
-                    ),
-                    
-                    ft.Container(height=15),
-                    
-                    # Option 2: Manueller Download
-                    ft.Container(
-                        content=ft.Column([
-                            ft.Text("Option 2: Manueller Download", weight=ft.FontWeight.BOLD, size=14),
-                            ft.Text("Bei Firewall-Problemen oder langsamer Verbindung.", size=11, color=ft.Colors.GREY_600),
-                            ft.Container(height=8),
-                            ft.Text("1. Modell im Browser herunterladen:", size=12),
-                            ft.Container(
-                                content=ft.ElevatedButton(
-                                    "Download-Seite öffnen",
-                                    icon=ft.Icons.OPEN_IN_NEW,
-                                    on_click=open_download_link,
-                                ),
-                                padding=ft.padding.only(left=15, top=3, bottom=3)
-                            ),
-                            ft.Text("2. Die .tar.gz Datei entpacken (z.B. mit 7-Zip)", size=12),
-                            ft.Text("3. Den entpackten Ordner hierhin kopieren:", size=12),
-                            ft.Container(
-                                content=ft.ElevatedButton(
-                                    "Zielordner öffnen",
-                                    icon=ft.Icons.FOLDER_OPEN,
-                                    on_click=open_model_folder,
-                                ),
-                                padding=ft.padding.only(left=15, top=3, bottom=3)
-                            ),
-                            ft.Container(
-                                content=ft.SelectableText(
-                                    model_dir,
-                                    style=ft.TextStyle(size=9, font_family="monospace")
-                                ),
-                                bgcolor=ft.Colors.GREY_200,
-                                padding=6,
-                                border_radius=4,
-                            ),
-                            ft.Text("4. Anwendung neu starten", size=12),
-                        ]),
-                        bgcolor=ft.Colors.ORANGE_50,
-                        padding=15,
-                        border_radius=8
-                    ),
-                ], spacing=3, tight=True)
-            ),
-            actions=[
-                ft.TextButton("Abbrechen", on_click=close_dialog),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
-        )
-        
-        if self.page:
-            self.page.overlay.append(dialog)
-            dialog.open = True
-            self.page.update()
 
     def _start_model_download(self):
         """Startet den Modell-Download in einem separaten Thread."""
@@ -243,8 +122,8 @@ class AnonymizeTab(ft.Container):
                 self._action_button.text = "Modell herunterladen"
                 self._action_button.icon = ft.Icons.DOWNLOAD
                 self._action_button.disabled = False
-                # Zeige Dialog mit manueller Download-Option
-                self._show_download_failed_dialog(message)
+                if self.page:
+                    self.page.open(ft.SnackBar(ft.Text(f"Fehler: {message}")))
             
             try:
                 self.update()
@@ -253,103 +132,6 @@ class AnonymizeTab(ft.Container):
         
         thread = threading.Thread(target=download_thread, daemon=True)
         thread.start()
-
-    def _show_download_failed_dialog(self, error_message: str):
-        """Zeigt einen Dialog mit Anleitung zum manuellen Download."""
-        model_dir = get_model_directory()
-        
-        def close_dialog(e):
-            dialog.open = False
-            self.page.update()
-        
-        def open_download_link(e):
-            webbrowser.open(MODEL_URL)
-        
-        def open_model_folder(e):
-            # Ordner erstellen falls nicht vorhanden
-            os.makedirs(model_dir, exist_ok=True)
-            # Ordner im Explorer öffnen
-            if sys.platform == 'win32':
-                os.startfile(model_dir)
-            elif sys.platform == 'darwin':
-                os.system(f'open "{model_dir}"')
-            else:
-                os.system(f'xdg-open "{model_dir}"')
-        
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Row([
-                ft.Icon(ft.Icons.ERROR_OUTLINE, color=ft.Colors.RED, size=28),
-                ft.Text("Download fehlgeschlagen", weight=ft.FontWeight.BOLD, size=18)
-            ], spacing=10),
-            content=ft.Container(
-                width=500,
-                content=ft.Column([
-                    ft.Text(
-                        "Der automatische Download des Sprachmodells ist fehlgeschlagen. "
-                        "Dies liegt häufig an Firewall-Einstellungen oder Netzwerk-Einschränkungen.",
-                        size=13
-                    ),
-                    ft.Container(height=5),
-                    ft.Container(
-                        content=ft.Text(f"Fehler: {error_message}", size=11, italic=True),
-                        bgcolor=ft.Colors.RED_50,
-                        padding=10,
-                        border_radius=5
-                    ),
-                    ft.Container(height=15),
-                    ft.Text("Manueller Download:", weight=ft.FontWeight.BOLD, size=14),
-                    ft.Container(height=5),
-                    ft.Text("1. Laden Sie das Sprachmodell manuell herunter:", size=12),
-                    ft.Container(
-                        content=ft.Row([
-                            ft.ElevatedButton(
-                                f"Modell herunterladen (~{get_model_size_mb():.0f} MB)",
-                                icon=ft.Icons.DOWNLOAD,
-                                on_click=open_download_link,
-                                style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE, color=ft.Colors.WHITE)
-                            ),
-                        ]),
-                        padding=ft.padding.only(left=15, top=5, bottom=5)
-                    ),
-                    ft.Container(height=5),
-                    ft.Text("2. Entpacken Sie die heruntergeladene .tar.gz Datei", size=12),
-                    ft.Container(height=5),
-                    ft.Text("3. Kopieren Sie den entpackten Ordner hierhin:", size=12),
-                    ft.Container(
-                        content=ft.Row([
-                            ft.ElevatedButton(
-                                "Zielordner öffnen",
-                                icon=ft.Icons.FOLDER_OPEN,
-                                on_click=open_model_folder,
-                            ),
-                        ]),
-                        padding=ft.padding.only(left=15, top=5, bottom=5)
-                    ),
-                    ft.Container(
-                        content=ft.SelectableText(
-                            model_dir,
-                            style=ft.TextStyle(size=10, font_family="monospace")
-                        ),
-                        bgcolor=ft.Colors.GREY_100,
-                        padding=8,
-                        border_radius=5,
-                        width=450
-                    ),
-                    ft.Container(height=10),
-                    ft.Text("4. Starten Sie die Anwendung neu", size=12),
-                ], spacing=3, tight=True)
-            ),
-            actions=[
-                ft.TextButton("Schließen", on_click=close_dialog),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
-        )
-        
-        if self.page:
-            self.page.overlay.append(dialog)
-            dialog.open = True
-            self.page.update()
 
     def _start_anonymization(self):
         """Startet die Anonymisierung in einem separaten Thread."""

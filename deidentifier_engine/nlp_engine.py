@@ -6,12 +6,7 @@ import tarfile
 import shutil
 import tempfile
 import urllib.request
-import ssl
-import socket
-import time
-import threading
 from typing import Optional, Tuple, Callable
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
@@ -21,10 +16,6 @@ from presidio_anonymizer import AnonymizerEngine
 DEFAULT_MODEL_NAME = "de_core_news_lg"
 MODEL_VERSION = "3.7.0"
 MODEL_URL = f"https://github.com/explosion/spacy-models/releases/download/{DEFAULT_MODEL_NAME}-{MODEL_VERSION}/{DEFAULT_MODEL_NAME}-{MODEL_VERSION}.tar.gz"
-
-# Download-Konfiguration
-CONNECTION_TIMEOUT = 15  # 15 Sekunden für initiale Verbindung
-READ_TIMEOUT = 30  # 30 Sekunden Timeout wenn keine Daten kommen
 
 # Globale Engine-Instanzen (lazy initialized)
 _analyzer: Optional[AnalyzerEngine] = None
@@ -70,38 +61,11 @@ def is_model_available() -> bool:
     return os.path.exists(meta_path)
 
 
-def _check_connectivity() -> Tuple[bool, str]:
-    """
-    Schneller Konnektivitätstest zu GitHub (max 10 Sekunden).
-    Testet nur ob der Host erreichbar ist, nicht den vollständigen Download.
-    """
-    test_host = "github.com"
-    test_port = 443
-    
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(10)
-        result = sock.connect_ex((test_host, test_port))
-        sock.close()
-        
-        if result == 0:
-            return True, "Verbindung OK"
-        else:
-            return False, f"Verbindung zu {test_host} fehlgeschlagen (Code: {result})"
-    except socket.timeout:
-        return False, "Verbindungs-Timeout: Server nicht erreichbar"
-    except socket.gaierror as e:
-        return False, f"DNS-Fehler: {str(e)}"
-    except Exception as e:
-        return False, f"Netzwerkfehler: {str(e)}"
-
-
 def download_model_with_progress(
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Tuple[bool, str]:
     """
     Lädt das spaCy-Modell direkt von GitHub herunter (für --onefile Builds).
-    Prüft zuerst die Konnektivität mit schnellem Timeout.
     
     Args:
         progress_callback: Optionale Callback-Funktion mit (progress: 0.0-1.0, status_text: str)
@@ -111,162 +75,61 @@ def download_model_with_progress(
     """
     model_dir = get_model_directory()
     
-    # Modell-Verzeichnis erstellen
     try:
+        # Modell-Verzeichnis erstellen
         os.makedirs(model_dir, exist_ok=True)
-    except Exception as e:
-        return False, f"Konnte Verzeichnis nicht erstellen: {str(e)}"
-    
-    if progress_callback:
-        progress_callback(0.0, "Prüfe Netzwerkverbindung...")
-    
-    # SCHNELLER Konnektivitätstest zuerst (max 10 Sekunden)
-    connectivity_ok, connectivity_msg = _check_connectivity()
-    if not connectivity_ok:
-        return False, f"Keine Verbindung zu GitHub möglich: {connectivity_msg}. Bitte prüfen Sie Ihre Firewall-Einstellungen."
-    
-    if progress_callback:
-        progress_callback(0.01, "Verbindung OK - starte Download...")
-    
-    # Temporäre Datei für den Download
-    tmp_path = None
-    
-    try:
+        
+        if progress_callback:
+            progress_callback(0.0, "Starte Download...")
+        
+        # Temporäre Datei für den Download
         with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp_file:
             tmp_path = tmp_file.name
         
-        # Thread-basierter Download mit hartem Timeout
-        download_result = {'success': False, 'error': None, 'response': None}
-        
-        def try_connect():
-            """Versucht die Verbindung herzustellen."""
-            try:
-                ssl_context = ssl.create_default_context()
-                request = urllib.request.Request(
-                    MODEL_URL,
-                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) mlife-parser/1.0'}
-                )
-                # Sehr kurzer Socket-Timeout
-                socket.setdefaulttimeout(CONNECTION_TIMEOUT)
-                response = urllib.request.urlopen(request, timeout=CONNECTION_TIMEOUT, context=ssl_context)
-                download_result['response'] = response
-                download_result['success'] = True
-            except Exception as e:
-                download_result['error'] = str(e)
-        
-        # Verbindung in separatem Thread mit hartem Timeout
-        connect_thread = threading.Thread(target=try_connect, daemon=True)
-        connect_thread.start()
-        connect_thread.join(timeout=CONNECTION_TIMEOUT + 5)  # Etwas mehr Zeit als Socket-Timeout
-        
-        if connect_thread.is_alive() or not download_result['success']:
-            # Thread hängt noch oder Verbindung fehlgeschlagen
-            error_msg = download_result.get('error', 'Verbindungs-Timeout - Server antwortet nicht')
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except:
-                    pass
-            return False, f"Netzwerkfehler: {error_msg}. Bitte prüfen Sie Ihre Firewall-Einstellungen."
-        
-        # Verbindung erfolgreich - jetzt downloaden
-        response = download_result['response']
-        if response is None:
-            return False, "Verbindung fehlgeschlagen - keine Server-Antwort erhalten."
-        
-        if progress_callback:
-            progress_callback(0.02, "Verbunden - starte Download...")
-        
-        total_size = int(response.headers.get('content-length', 0))
-        downloaded = 0
-        block_size = 512 * 1024  # 512 KB Blöcke für häufigere Updates
-        last_progress_time = time.time()
-        
-        with open(tmp_path, 'wb') as out_file:
-            while True:
-                # Timeout-Check: Wenn seit 30 Sekunden keine Daten kamen, abbrechen
-                current_time = time.time()
-                
-                try:
-                    # Setze Socket-Timeout für jeden Read
-                    if hasattr(response, 'fp') and hasattr(response.fp, 'raw'):
-                        response.fp.raw._sock.settimeout(READ_TIMEOUT)
-                    buffer = response.read(block_size)
-                except socket.timeout:
-                    response.close()
-                    if tmp_path and os.path.exists(tmp_path):
-                        try:
-                            os.remove(tmp_path)
-                        except:
-                            pass
-                    return False, "Download-Timeout: Keine Daten empfangen. Verbindung möglicherweise blockiert."
-                except Exception as e:
-                    response.close()
-                    if tmp_path and os.path.exists(tmp_path):
-                        try:
-                            os.remove(tmp_path)
-                        except:
-                            pass
-                    return False, f"Download-Fehler: {str(e)}"
-                
-                if not buffer:
-                    break
-                
-                downloaded += len(buffer)
-                out_file.write(buffer)
-                last_progress_time = current_time
-                
+        try:
+            # Download mit Fortschrittsanzeige
+            def reporthook(block_num, block_size, total_size):
                 if total_size > 0 and progress_callback:
-                    progress = min(downloaded / total_size, 1.0) * 0.95
-                    downloaded_mb = downloaded / (1024 * 1024)
+                    # Download nimmt 0-99% ein, Entpacken wird separat angezeigt
+                    progress = min(block_num * block_size / total_size, 1.0) * 0.99
+                    downloaded_mb = (block_num * block_size) / (1024 * 1024)
                     total_mb = total_size / (1024 * 1024)
                     progress_callback(progress, f"Lade herunter: {downloaded_mb:.1f} / {total_mb:.1f} MB")
-        
-        response.close()
-        
-        # Prüfen ob Download vollständig
-        if total_size > 0 and downloaded < total_size:
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except:
-                    pass
-            return False, f"Download unvollständig: {downloaded}/{total_size} Bytes"
-        
-        if progress_callback:
-            progress_callback(0.96, "Entpacke Modell...")
-        
-        # Entpacken
-        print(f"Entpacke nach {model_dir}...")
-        with tarfile.open(tmp_path, "r:gz") as tar:
-            tar.extractall(model_dir)
-        
-        if progress_callback:
-            progress_callback(1.0, "Fertig!")
-        
-        print(f"Modell erfolgreich installiert in {model_dir}")
-        
-        # Temporäre Datei löschen
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        
-        return True, "Modell erfolgreich heruntergeladen und installiert."
-        
+            
+            print(f"Lade Modell von {MODEL_URL}...")
+            urllib.request.urlretrieve(MODEL_URL, tmp_path, reporthook)
+            
+            if progress_callback:
+                progress_callback(0.99, "Entpacke Modell...")
+            
+            # Entpacken
+            print(f"Entpacke nach {model_dir}...")
+            with tarfile.open(tmp_path, "r:gz") as tar:
+                tar.extractall(model_dir)
+            
+            if progress_callback:
+                progress_callback(1.0, "Fertig!")
+            
+            print(f"Modell erfolgreich installiert in {model_dir}")
+            return True, "Modell erfolgreich heruntergeladen und installiert."
+            
+        finally:
+            # Temporäre Datei löschen
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+                
+    except urllib.error.URLError as e:
+        error_msg = f"Netzwerkfehler beim Herunterladen: {str(e)}"
+        print(error_msg)
+        return False, error_msg
     except tarfile.TarError as e:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except:
-                pass
-        return False, f"Fehler beim Entpacken: {str(e)}"
-        
+        error_msg = f"Fehler beim Entpacken: {str(e)}"
+        print(error_msg)
+        return False, error_msg
     except Exception as e:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except:
-                pass
-        return False, f"Unerwarteter Fehler: {str(e)}"
+        error_msg = f"Unerwarteter Fehler: {str(e)}"
+        print(error_msg)
+        return False, error_msg
 
 
 def download_model() -> Tuple[bool, str]:
