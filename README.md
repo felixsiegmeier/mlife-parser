@@ -143,14 +143,22 @@ uv sync
 ### Schnellstart: GUI
 
 ```bash
+# Mit uv (empfohlen)
+uv run flet run main.py
+
+# Oder mit pip + Python
 python main.py
 ```
 
-Der spaCy-Anonymisierungsmodell wird beim ersten Öffnen der "Anonymize"-Tab automatisch heruntergeladen (~500 MB).
+Das spaCy-Anonymisierungsmodell wird beim ersten Öffnen der "Anonymize"-Tab automatisch heruntergeladen (~500 MB).
 
 ### Schnellstart: CLI (Parsing ohne Anonymisierung)
 
 ```bash
+# Mit uv
+uv run python cli.py data/gesamte_akte.csv -o output.csv
+
+# Oder mit pip + Python
 python cli.py data/gesamte_akte.csv -o output.csv
 ```
 
