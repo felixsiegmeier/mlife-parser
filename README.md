@@ -1,6 +1,6 @@
 # mLife Data Parser
 
-Ein Tool zur strukturierten Erfassung, Anonymisierung und Konsolidierung von medizinischen Patientendaten aus dem PDMS mLife (Charitéhaus Digital Zentrums für Chirurgie – DHZC).
+Ein Tool zur strukturierten Erfassung, Anonymisierung und Konsolidierung von medizinischen Patientendaten aus dem PDMS mLife
 
 **Entwickelt mit Fokus auf Datenschutz**: Alle Patientendaten werden mittels NLP-basierter Erkennung und manueller Blacklist-Filterung anonymisiert.
 
